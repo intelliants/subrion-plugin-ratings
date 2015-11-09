@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<plugin name="ratings">
+	<title>Ratings</title>
+	<summary>The plugin allows visitors to rate items.</summary>
+	<author>Arsen Orozbaev</author>
+	<contributor>Intelliants LLC</contributor>
+	<version>2.3.0</version>
+	<date>2013-05-20</date>
+	<compatibility>2.3.8</compatibility>
+
+	<actions>
+		<action name="ratings_view" url="ratings/" icon="view.png" order="1" pages="ratings">View</action>
+		<action name="ratings_config" url="ratings/config/" icon="tools.png" order="2" pages="ratings">Config</action>
+	</actions>
+
+	<adminpages>
+		<page name="ratings" menus="menu">Manage Ratings</page>
+	</adminpages>
+
+	<configgroup name="ratings">Ratings</configgroup>
+
+	<config group="ratings" custom="1" name="div_ratings" type="divider" description="Rating Configuration">Rating Configuration</config>
+	<config group="ratings" custom="1" name="ratings_items_enabled" type="itemscheckbox" description="List of items rating is enabled for"><![CDATA[]]></config>
+	<config group="ratings" custom="1" name="ratings_items_implemented" type="hidden" description="List of items rating is implemented for">autos,articles,estates,listings,accounts</config>
+	<config group="ratings" name="listing_ratings_accounts" type="radio" description="Allow to rate for guests" values="1,0">1</config>
+	<config group="ratings" custom="1" name="ratings_stars" type="hidden" description="Ratings stars list">a:0:{}</config>
+	<config group="ratings" custom="1" name="ratings_max_star" type="text" description="Max number of stars for listing ratings" private="0">5</config>
+	<config group="ratings" custom="1" name="num_latest_ratings" type="text" description="Number of latest ratings in block" private="0">5</config>
+
+	<pages>
+		<page name="ratings" service="1" url="ratings/">Ratings</page>
+	</pages>
+
+	<phrases>
+		<phrase category="common" key="ratings">Ratings</phrase>
+		<phrase category="common" key="rate">Rate</phrase>
+		<phrase category="common" key="rate_num">Rate number</phrase>
+		<phrase category="common" key="rate_this">Rate this</phrase>
+		<phrase category="common" key="not_rated">Not rated</phrase>
+		<phrase category="common" key="no_auth">Guest cannot rate! Please login.</phrase>
+		<phrase category="common" key="listing_ratings_submission_disabled">Listing ratings is disabled by adminstrator.</phrase>
+		<phrase category="admin" key="manage_ratings">Manage Ratings</phrase>
+		<phrase category="admin" key="ratings_config">Ratings config</phrase>
+		<phrase category="admin" key="enable_ratings_for">Enable Ratings for</phrase>
+		<phrase category="admin" key="rate_titles">Titles for ratings</phrase>
+		<phrase category="admin" key="edit_rating">Edit rating</phrase>
+		<phrase category="admin" key="rating_deleted">Rating value has been deleted.</phrase>
+		<phrase category="admin" key="no_rating_relation">No rating relation</phrase>
+		<phrase category="admin" key="are_you_sure_to_delete_selected_ratings">Are you sure you want to clear selected ratings?</phrase>
+		<phrase category="admin" key="are_you_sure_to_delete_this_rating">Are you sure you want to clear this rating?</phrase>
+	</phrases>
+
+	<blocks>
+		<block name="latest_rates" title="Recently Rated" collapsible="1" position="right" type="smarty">
+			<![CDATA[
+{if isset($latest_ratings)}
+	{foreach $latest_ratings as $rate name='latest_rates'}
+		<div class="info">
+			<img src="{$img}calendar.png" alt="" /> {$rate.date|date_format:$config.date_format}
+		</div>
+		<a href="{$smarty.const.IA_URL}{$rate.item_url}">{$rate.item_title}</a><br />
+		{section name=star loop=$rate.rate}<img src="{$img}star.png" alt="" />{/section} ({$rate.rate})
+		{if !$smarty.foreach.latest_rates.last}<hr />{/if}
+	{/foreach}
+{/if}
+			]]>
+		</block>
+	</blocks>
+
+	<hooks>
+		<hook name="phpListingRemoved" type="php">
+			<![CDATA[
+$iaDb = iaCore::instance()->iaDb;
+
+$stmt = iaDb::printf("`obj_id` = :id AND `item_type` = ':item'", array(
+	'id' => $itemId,
+	'item' => $itemName
+));
+$array = $iaDb->onefield('`id`', $stmt, null, null, 'ratings');
+
+if ($array)
+{
+	$array = implode(',', $array);
+
+	$stmt = '`id` IN (' . $array . ')';
+	$iaDb->delete($stmt, 'ratings');
+
+	$stmt = '`rate_id` IN (' . $array . ')';
+	$iaDb->delete($stmt, 'ratings_click');
+}
+			]]>
+		</hook>
+		<hook name="bootstrap" type="php">
+			<![CDATA[
+if (iaCore::ACCESS_ADMIN == $iaCore->getAccessType())
+{
+	$count = $iaDb->one(iaDb::STMT_COUNT_ROWS, null, 'ratings');
+	$iaView->assign('num_total_ratings', $count);
+}
+else
+{
+	$sql = "SELECT * FROM `{$iaCore->iaDb->prefix}ratings`
+		WHERE `rate` != '0'
+		ORDER BY `date` DESC
+		LIMIT ".$iaCore->get('num_latest_ratings');
+	$latest_ratings = $iaDb->getAll($sql);
+	$iaView->assign('latest_ratings', $latest_ratings);
+}
+			]]>
+		</hook>
+
+		<hook name="smartyViewListingBeforeFooter" type="smarty" filename="plugins/ratings/templates/front/index.tpl"><![CDATA[]]></hook>
+
+		<hook name="phpViewListingBeforeStart" type="php">
+			<![CDATA[
+$active_items = explode(',', $iaCore->get('ratings_items_enabled'));
+
+if (!isset($item) || $item == '')
+{
+	$item = IA_CURRENT_PACKAGE;
+}
+if (!isset($title))
+{
+	$title == '';
+}
+
+$iaView->assign('ratings_title', $title);
+$iaView->assign('ratings_item', $item);
+$iaView->assign('ratings_url', str_replace(IA_URL, '', $url));
+$iaView->assign('ratings_listing', $listing);
+if (in_array($item,$active_items))
+{
+	$iaDb->setTable('ratings');
+	$rating = $iaDb->row_bind(iaDb::ALL_COLUMNS_SELECTION, '`item_type` = :item AND `obj_id` = :id', array('item' => $item, 'id' => $listing));
+	$iaDb->resetTable();
+	if (!$rating || $rating['rate'] == 0)
+	{
+		$rating['rate'] = iaLanguage::get('not_rated');
+	}
+	$rating['cur_rate'] = floor($rating['rate']);
+	$iaView->assign('rate', $rating);
+	$iaView->assign('ratings_allow', true);
+}
+else
+{
+	$iaView->assign('ratings_allow', false);
+}
+$iaView->assign('ratings_texts', unserialize($iaCore->get('ratings_stars', 'a:0:{}')));
+			]]>
+		</hook>
+
+		<hook name="phpExtrasUninstallBefore">
+		<![CDATA[
+$iaItem = $iaCore->factory(iaCore::CORE, 'item');
+$package_items = $iaItem->getItemsByPackage($extra);
+
+if (empty($package_items))
+{
+	return;
+}
+
+if ($enabledItems = $iaItem->getEnabledItemsForPlugin($extra))
+{
+	foreach ($enabledItems as $index => $item)
+	{
+		if (in_array($item, $package_items))
+		{
+			array_splice($enabledItems, $index, 1);
+		}
+	}
+
+	$iaItem->setEnabledItemsForPlugin($extra, $enabledItems);
+}
+		]]>
+		</hook>
+		<hook name="phpPackageItemChangedForPlugin">
+		<![CDATA[
+$plugin = 'ratings';
+
+define('IA_TABLE_NAME_FIELDS', 'fields');
+define('IA_TABLE_NAME_LANGUAGE', 'language');
+define('IA_TABLE_NAME_FIELDS_PAGES', 'fields_pages');
+
+$pages = array(
+	'accounts' => array('view_member', 'profile'),
+	'autos' => array('submit_auto', 'auto_edit'),
+	'articles' => array('submit_article', 'edit_article'),
+	'estates' => array('estate_submit', 'estate_edit'),
+	'listings' => array('add_listing', 'edit_listing')
+);
+
+foreach ($data as $item)
+{
+	$itemname = $item['item'];
+	$field = $itemname.'_'.$plugin;
+
+	switch($item['action'])
+	{
+		case '+':
+			if (!$iaDb->exists('`extras` = :plugin AND `item` = :item AND `name` = :field_name', array('plugin' => $plugin, 'item' => $itemname, 'field_name' => $field), IA_TABLE_NAME_FIELDS))
+			{
+				$sql = sprintf("ALTER TABLE `%s%s` ADD `%s` SMALLINT UNSIGNED NOT NULL", $iaCore->iaDb->prefix, $itemname, $field);
+				$iaDb->query($sql);
+
+				$id = $iaDb->insert(array(
+					'extras' => $plugin,
+					'item' => $itemname,
+					'name' => $field,
+					'type' => 'text',
+					'length' => 5,
+					'status' => 'active'
+				), false, IA_TABLE_NAME_FIELDS);
+
+				foreach ($pages[$itemname] as $page)
+				{
+					$iaDb->insert(array(
+						'page_name' => $page,
+						'extras' => $plugin,
+						'field_id' => $id
+					), false, IA_TABLE_NAME_FIELDS_PAGES);
+				}
+
+				$iaDb->insert(array(
+					'category' => 'common',
+					'code' => 'en',
+					'extras' => $plugin,
+					'key' => 'field_'.$field,
+					'value' => 'Rating'
+				), false, IA_TABLE_NAME_LANGUAGE);
+			}
+
+			break;
+
+		case '-':
+			$id = $iaDb->one('id', "`extras` = '".$plugin."' AND `name` = '$field'", IA_TABLE_NAME_FIELDS);
+
+			if ($id)
+			{
+				$sql = sprintf("ALTER TABLE `%s%s` DROP `%s`", $iaCore->iaDb->prefix, $itemname, $field);
+				$iaDb->query($sql);
+
+				$iaDb->delete('`field_id` = :id', IA_TABLE_NAME_FIELDS_PAGES, array('id' => $id));
+				$iaDb->delete('`id` = :id', IA_TABLE_NAME_FIELDS, array('id' => $id));
+				$iaDb->delete('`extras` = :plugin AND `key` = :key', IA_TABLE_NAME_LANGUAGE, array('plugin' => $plugin, 'key' => 'field_'.$field));
+			}
+	}
+}
+		]]>
+		</hook>
+	</hooks>
+
+	<install>
+		<sql><![CDATA[
+CREATE TABLE `{prefix}ratings` (
+	`id` int(8) NOT NULL auto_increment,
+	`obj_id` int(11) NOT NULL default '0',
+	`item_type` varchar(30) NOT NULL default 'accounts',
+	`item_title` varchar(100) NOT NULL default '',
+	`item_url` varchar(255) NOT NULL default '',
+	`rate` float NOT NULL default '0',
+	`rate_num` int(8) NOT NULL default 0,
+	`date` datetime NOT NULL default '0000-00-00 00:00:00',
+	PRIMARY KEY  (`id`),
+	KEY `obj_id` (`obj_id`)
+) {mysql_version};
+		]]></sql>
+
+		<sql><![CDATA[
+CREATE TABLE `{prefix}ratings_click` (
+	`id` int(8) NOT NULL auto_increment,
+	`rate_id` int(11) NOT NULL default '0',
+	`user` int(11) NOT NULL default '0',
+	`id_session` varchar(32) NOT NULL default '',
+	`rate` tinyint(3) NOT NULL default 1,
+	`date` datetime NOT NULL default '0000-00-00 00:00:00',
+	PRIMARY KEY  (`id`),
+	KEY `rate_id` (`rate_id`)
+) {mysql_version};
+		]]></sql>
+	</install>
+
+	<uninstall>
+		<sql><![CDATA[DROP TABLE IF EXISTS `{prefix}ratings`;]]></sql>
+		<sql><![CDATA[DROP TABLE IF EXISTS `{prefix}ratings_click`;]]></sql>
+	</uninstall>
+
+</plugin>
